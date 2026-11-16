@@ -1,0 +1,9 @@
+anthropic>=1.15
+openai>=3.0
+fastapi
+uvicorn[standard]
+sounddevice
+numpy
+python-dotenv
+mlx-whisper  # local speech-to-text on Apple Silicon
+speechbrain  # voice ID: tells your lines from everyone else's (~83 MB model, downloaded on first use)

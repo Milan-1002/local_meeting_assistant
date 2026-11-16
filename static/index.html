@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meeting Copilot</title>
+<style>
+  :root {
+    --bg: #f5f5f2; --panel: #ffffff; --ink: #1b1b19; --muted: #6e6e68; --faint: #a3a39c; --line: #e6e5e0;
+    --accent: #2f6fde; --accent-ink: #ffffff; --accent-soft: #edf2fd; --warn: #b85c00; --warn-soft: #fdf1e4;
+    --ok: #23824a; --ok-soft: #e7f5ec; --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121211; --panel: #1b1b1a; --ink: #ecebe6; --muted: #9b9a94; --faint: #64635e; --line: #2c2c2a;
+            --accent: #7aa7ff; --accent-ink: #0e1420; --accent-soft: #1b2436; --warn: #f0a050; --warn-soft: #33261a;
+            --ok: #5cc98a; --ok-soft: #17291f; --shadow: none; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+           border: 1px solid var(--line); background: var(--panel); color: var(--ink); white-space: nowrap; }
+  button:hover { border-color: var(--faint); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+  button.ghost:hover { color: var(--ink); background: var(--bg); }
+  button.danger { color: var(--warn); }
+  textarea, input { width: 100%; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg);
+                    border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; outline: none; }
+  textarea:focus, input:focus { border-color: var(--accent); }
+
+  /* header */
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 18px; background: var(--panel);
+           border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+  #topic { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted);
+          padding: 4px 10px; border-radius: 99px; background: var(--bg); white-space: nowrap; }
+  #status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  #status.busy::before { background: var(--accent); animation: pulse 1s infinite; }
+  #status.err::before, #status.paused::before { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: .3; } }
+  #cost { font-variant-numeric: tabular-nums; }
+
+  /* layout */
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); }
+  main.no-transcript { grid-template-columns: minmax(0, 1fr) 0; }
+  main.no-transcript #transcriptCol { display: none; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } #transcriptCol { border-left: 0; border-top: 1px solid var(--line); max-height: 45vh; } }
+  .col { display: flex; flex-direction: column; min-height: 0; }
+  .col-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px 6px;
+              font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .scroll { overflow-y: auto; min-height: 0; flex: 1; }
+
+  /* answers */
+  #answers { padding: 6px 22px 22px; }
+  .empty { color: var(--muted); font-size: 14px; padding: 28px 4px; max-width: 520px; }
+  .empty b { color: var(--ink); font-weight: 600; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px;
+          box-shadow: var(--shadow); margin-bottom: 14px; }
+  .card .q { display: flex; gap: 8px; align-items: baseline; color: var(--muted); font-size: 14px; margin-bottom: 10px; }
+  .card .q .text { flex: 1; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--bg); color: var(--muted); white-space: nowrap; }
+  .tag.src { background: var(--accent-soft); color: var(--accent); }
+  .card .a { font-size: 21px; line-height: 1.45; font-weight: 500; letter-spacing: -.005em; }
+  .card .points { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .card .points span { font-size: 13px; padding: 3px 10px; border-radius: 8px; background: var(--ok-soft); color: var(--ok); }
+  .card .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 14px; align-items: center; }
+  .card .actions .spacer { flex: 1; }
+  .card.pending .a { color: var(--faint); }
+  .card.pending .a::after { content: "…"; animation: pulse 1s infinite; }
+  .card.copied { outline: 2px solid var(--accent); }
+  .older .card { padding: 12px 16px; box-shadow: none; cursor: pointer; }
+  .older .card .a { font-size: 15px; font-weight: 400; }
+  .older .card .q { font-size: 13px; margin-bottom: 4px; }
+  .older .card:not(.open) .points, .older .card:not(.open) .actions { display: none; }
+  .older-label { font-size: 12px; color: var(--muted); margin: 22px 0 8px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+
+  /* ask next */
+  #askNextWrap { padding: 0 22px 4px; }
+  .qcard { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; margin-bottom: 8px;
+           border-radius: 12px; background: var(--accent-soft); border: 1px solid transparent; }
+  .qcard .body { flex: 1; min-width: 0; }
+  .qcard .text { font-size: 17px; font-weight: 550; line-height: 1.4; }
+  .qcard .why { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .qcard .btns { display: flex; gap: 2px; flex-shrink: 0; }
+  .qcard .btns button { padding: 4px 8px; }
+  .qcard.copied { border-color: var(--accent); }
+  .qcard.voted .btns button[data-act="good"], .qcard.voted .btns button[data-act="bad"] { opacity: .35; pointer-events: none; }
+  .empty.small { font-size: 13px; padding: 4px 2px 10px; }
+
+  /* composer */
+  .composer { padding: 12px 22px 16px; border-top: 1px solid var(--line); background: var(--panel); }
+  .composer .row { display: flex; gap: 8px; }
+  .composer .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  #privateAnswer { font-size: 14px; margin-bottom: 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg); white-space: pre-wrap; }
+  #privateAnswer:empty { display: none; }
+
+  /* transcript */
+  #transcriptCol { border-left: 1px solid var(--line); background: var(--panel); }
+  #transcript { padding: 4px 18px 12px; font-size: 14px; }
+  .seg { position: relative; padding: 5px 8px 5px 10px; margin: 0 -8px 2px -10px; border-left: 3px solid transparent; border-radius: 0 6px 6px 0; }
+  .seg .t { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .seg .state { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  .seg .go { position: absolute; right: 4px; top: 3px; display: none; gap: 4px; }
+  .seg .go button { font-size: 12px; padding: 2px 8px; }
+  .seg:hover { background: var(--bg); }
+  .seg:hover .go { display: flex; }
+  .seg.checking, .seg.answering { border-left-color: var(--accent); background: var(--accent-soft); }
+  .seg.answered { border-left-color: var(--ok); }
+  .seg.answered .state { color: var(--ok); }
+  .seg.skipped { border-left-color: var(--line); }
+  .seg.live { color: var(--muted); }
+  .seg.live::after { content: "▍"; margin-left: 2px; color: var(--accent); animation: pulse 1s infinite; }
+  .paste { padding: 10px 18px 14px; border-top: 1px solid var(--line); }
+
+  /* drawers */
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--panel);
+            border-left: 1px solid var(--line); box-shadow: -8px 0 32px rgba(0,0,0,.12); transform: translateX(105%);
+            transition: transform .2s ease; z-index: 10; display: flex; flex-direction: column; }
+  .drawer.open { transform: none; }
+  .drawer header { justify-content: space-between; }
+  .drawer .body { padding: 16px 20px 24px; overflow-y: auto; flex: 1; }
+  .drawer h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 6px; font-weight: 600; }
+  .drawer h3:first-child { margin-top: 0; }
+  .drawer ul { margin: 0; padding-left: 18px; font-size: 14px; }
+  .drawer li { margin: 3px 0; }
+  .drawer .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .seg-ctl { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg-ctl button { border: 0; border-radius: 0; }
+  .seg-ctl button.on { background: var(--accent); color: var(--accent-ink); }
+  .switch { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+  .switch input { width: auto; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; word-break: break-all; }
+  code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+  #scrim { position: fixed; inset: 0; background: rgba(0,0,0,.18); z-index: 9; display: none; }
+  #scrim.on { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Meeting Copilot</h1>
+  <span id="status" class="pill">connecting…</span>
+  <div id="topic"></div>
+  <span id="cost" class="pill" title="AI usage this meeting">$0.00</span>
+  <button id="pause">Pause</button>
+  <button class="ghost" id="toggleTranscript" title="Show / hide transcript">Transcript</button>
+  <button class="ghost" id="openNotes">Notes</button>
+  <button class="ghost" id="openSettings">Settings</button>
+  <button class="danger" id="end">End meeting</button>
+</header>
+
+<main id="main">
+  <section class="col">
+    <div class="col-head"><span>Ask next</span><button class="ghost" id="suggestQ" title="Get question ideas for this moment">Suggest questions</button></div>
+    <div id="askNextWrap"><div id="askNext"><div class="empty small">Question ideas appear when someone asks "any questions?", the topic changes, or every few minutes.</div></div></div>
+    <div class="col-head"><span>Suggested answers</span><span id="answerCount"></span></div>
+    <div class="scroll" id="answersScroll">
+      <div id="answers">
+        <div class="empty" id="emptyAnswers">
+          <b>Listening.</b> When someone asks you something or wants your opinion, an answer you can say
+          appears here. You can also click any line in the transcript to get an answer for it.
+          <br><br>Tip: tell it who you are and what this meeting is about in <a href="#" id="emptySettings">Settings</a>.
+        </div>
+        <div id="current"></div>
+        <div id="olderWrap" hidden><div class="older-label">Earlier</div><div class="older" id="older"></div></div>
+      </div>
+    </div>
+    <div class="composer">
+      <div id="privateAnswer"></div>
+      <div class="row">
+        <input id="composer" placeholder="Type a question…  (press / to focus)">
+        <button class="primary" id="answerAsMe" title="Draft what you could say">Answer as me</button>
+        <button id="askPrivately" title="Ask about this or past meetings; only you see it">Ask privately</button>
+        <button id="questionsOn" title="Suggest questions to ask about what you typed">Questions on this</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="col" id="transcriptCol">
+    <div class="col-head"><span>Live transcript</span><span id="mode" style="text-transform:none;letter-spacing:0;font-weight:400"></span></div>
+    <div class="scroll" id="transcript">
+      <div id="lines"><div class="empty">Waiting for speech…</div></div>
+      <div id="live" class="seg live" hidden></div>
+    </div>
+    <div class="paste"><input id="paste" placeholder="Add a line to the transcript"></div>
+  </section>
+</main>
+
+<div id="scrim"></div>
+
+<aside class="drawer" id="notes">
+  <header><h1>Meeting notes</h1><span><button id="refreshNotes">Refresh</button> <button class="ghost close">Close</button></span></header>
+  <div class="body">
+    <h3>Summary <span id="notesClock" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h3>
+    <ul id="summary"><li class="empty" style="padding:0">Notes refresh every few minutes while people talk.</li></ul>
+    <h3>Decisions</h3><ul id="decisions"></ul>
+    <h3>Action items</h3><ul id="action_items"></ul>
+    <h3>Open issues</h3><ul id="open_issues"></ul>
+    <h3>Questions you could ask</h3><ul id="ideas"></ul>
+  </div>
+</aside>
+
+<aside class="drawer" id="settings">
+  <header><h1>Settings</h1><button class="ghost close">Close</button></header>
+  <div class="body">
+    <h3>This meeting</h3>
+    <textarea id="context" rows="4" placeholder="e.g. Sprint planning for the payments service. I'm the backend dev; I want clarity on the API deadline."></textarea>
+    <div class="note">Used for every answer, and helps speech recognition with names and jargon.</div>
+
+    <h3>When to use AI</h3>
+    <label class="switch"><input type="checkbox" id="auto"> Automatic: answer when I'm asked something, refresh notes and suggest questions on its own</label>
+    <div class="note">Off (cheapest): AI runs only when you click Answer, Questions, Refresh or a composer button.</div>
+    <div style="margin-top:10px" class="seg-ctl" id="sensitivity">
+      <button data-v="low">Only when named</button><button data-v="normal">Normal</button><button data-v="high">Any question</button>
+    </div>
+    <div class="note">Automatic only: free rules flag likely questions; a cheap model double-checks before an answer is written.</div>
+
+    <h3>Knowledge base</h3>
+    <dl id="kbInfo"></dl>
+    <div class="note">Open the vault folder in Obsidian (Open folder as vault) to browse it as a graph.
+      Edit <code>wiki/me.md</code> to teach it who you are and how you talk.</div>
+
+    <h3>Models</h3>
+    <dl id="modelInfo"></dl>
+    <h3>Usage</h3>
+    <dl id="usageInfo"></dl>
+  </div>
+</aside>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const answers = [];
+let paused = false, pending = null, auto = false;
+const QUESTIONS_HINT = () => auto ? `Question ideas appear when someone asks "any questions?", the topic changes, or every few minutes.`
+  : `Click Suggest questions, hover a transcript line and click Questions, or type a topic and click Questions on this.`;
+function renderModeHints() {
+  $("emptyAnswers").firstElementChild.nextSibling.textContent = auto
+    ? " When someone asks you something or wants your opinion, an answer you can say appears here. You can also click any line in the transcript to get an answer for it."
+    : " Hover a transcript line and click Answer, or type a question below. Nothing is sent to the AI until you click.";
+  const sum = $("summary").querySelector(".empty");
+  if (sum) sum.textContent = auto ? "Notes refresh every few minutes while people talk." : "Click Refresh to write notes from the transcript.";
+}
+
+/* ---------- status & header */
+function setStatus(text) {
+  const s = $("status");
+  s.textContent = text;
+  s.className = "pill" + (/error|disconnected/i.test(text) ? " err" : /paused/i.test(text) ? " paused"
+    : /…/.test(text) ? " busy" : "");
+}
+function setUsage(u) {
+  const money = (c) => "$" + c.toFixed(c < 1 ? 3 : 2);
+  $("cost").textContent = `${money(u.cost)}${u.unpriced_tokens ? ` + ${(u.unpriced_tokens / 1000).toFixed(1)}k unpriced tokens` : ""} · ${u.calls} calls`;
+  $("usageInfo").innerHTML = Object.entries(u.by_model).map(([m, x]) =>
+    `<dt>${esc(m)}</dt><dd>${x.cost !== undefined ? money(x.cost) + " · " : ""}${x.calls} calls · ${x.in.toLocaleString()} in (${x.cached.toLocaleString()} cached) · ${x.out.toLocaleString()} out</dd>`).join("")
+    || "<dt>—</dt><dd>no calls yet</dd>";
+}
+function setPaused(p) { paused = p; $("pause").textContent = p ? "Resume" : "Pause"; }
+
+/* ---------- answers */
+function cardHTML(a, cls = "") {
+  return `<div class="card ${cls}" data-id="${a.id}">
+    <div class="q"><span class="text">${a.asker ? `<b>${esc(a.asker)}:</b> ` : ""}${esc(a.question)}</span><span class="tag src">${esc(a.source)}</span><span class="tag">${esc(a.clock)}</span></div>
+    <div class="a">${esc(a.answer)}</div>
+    ${a.points?.length ? `<div class="points">${a.points.map((p) => `<span>${esc(p)}</span>`).join("")}</div>` : ""}
+    <div class="actions">
+      <button data-act="copy">Copy</button>
+      <button class="ghost" data-act="shorter">Shorter</button>
+      <button class="ghost" data-act="different">Different</button>
+      <button class="ghost" data-act="detailed">More detail</button>
+      <span class="spacer"></span>
+      <span class="tag">${esc(a.basis)}</span>
+      <button class="ghost" data-act="bad" title="Not useful — helps tune detection">Not useful</button>
+    </div></div>`;
+}
+function renderAnswers() {
+  $("emptyAnswers").hidden = answers.length > 0 || !!pending;
+  const latest = answers[answers.length - 1];
+  $("current").innerHTML =
+    (pending ? `<div class="card pending"><div class="q"><span class="text">${esc(pending.question)}</span><span class="tag src">drafting</span></div><div class="a">Writing an answer</div></div>` : "") +
+    (latest ? cardHTML(latest) : "");
+  const older = answers.slice(0, -1).reverse();
+  $("olderWrap").hidden = older.length === 0;
+  $("older").innerHTML = older.map((a) => cardHTML(a)).join("");
+  $("answerCount").textContent = answers.length ? `${answers.length} so far` : "";
+}
+$("answers").addEventListener("click", async (e) => {
+  const card = e.target.closest(".card[data-id]");
+  if (!card) return;
+  const a = answers.find((x) => x.id == card.dataset.id);
+  const act = e.target.closest("button")?.dataset.act;
+  if (!act) { if (card.closest(".older")) card.classList.toggle("open"); return; }
+  if (act === "copy") {
+    navigator.clipboard?.writeText(a.answer);
+    card.classList.add("copied"); setTimeout(() => card.classList.remove("copied"), 700);
+  } else if (act === "bad") {
+    post("/feedback", { answer_id: a.id, question: a.question, answer: a.answer, verdict: "not useful" });
+    e.target.textContent = "Noted"; e.target.disabled = true;
+  } else {
+    post("/answer", { question: a.question, segment_id: a.segment_id, style: act, previous: a.answer });
+  }
+});
+
+/* ---------- questions to ask */
+const suggestions = [];
+function renderQuestions() {
+  const latest = suggestions.slice(-2).reverse();
+  $("askNext").innerHTML = latest.map((q) => `<div class="qcard" data-id="${q.id}">
+      <div class="body"><div class="text">${esc(q.question)}</div><div class="why">${esc(q.why)} · ${esc(q.clock)}</div></div>
+      <div class="btns"><button class="ghost" data-act="copy">Copy</button><button class="ghost" data-act="good" title="Good question">👍</button><button class="ghost" data-act="bad" title="Not useful">👎</button></div>
+    </div>`).join("") || `<div class="empty small">${QUESTIONS_HINT()}</div>`;
+  fillList("ideas", suggestions.map((q) => `[${q.clock}] ${q.question}`), "None yet");
+}
+function onQuestions(d) {
+  $("suggestQ").textContent = "Suggest questions"; $("suggestQ").disabled = false;
+  if (d.replay) suggestions.length = 0;
+  for (const q of d.items) if (!suggestions.some((x) => x.id === q.id)) suggestions.push(q);
+  if (!d.items.length && !d.replay) {
+    $("suggestQ").textContent = d.error ? "Couldn't suggest – retry" : "Nothing worth asking yet";
+    setTimeout(() => ($("suggestQ").textContent = "Suggest questions"), 4000);
+  }
+  renderQuestions();
+}
+async function requestQuestions(body) {
+  $("suggestQ").textContent = "Thinking…"; $("suggestQ").disabled = true;
+  const r = await post("/questions", body);
+  if (!(await r.json()).ok) { $("suggestQ").textContent = "Suggest questions"; $("suggestQ").disabled = false; }
+}
+$("suggestQ").onclick = () => requestQuestions();
+$("askNext").addEventListener("click", (e) => {
+  const card = e.target.closest(".qcard"), act = e.target.closest("button")?.dataset.act;
+  if (!card || !act) return;
+  const q = suggestions.find((x) => x.id == card.dataset.id);
+  if (act === "copy") {
+    navigator.clipboard?.writeText(q.question);
+    card.classList.add("copied"); setTimeout(() => card.classList.remove("copied"), 700);
+  } else {
+    post("/feedback", { kind: "question", question: q.question, why: q.why, verdict: act });
+    card.classList.add("voted"); e.target.closest("button").style.opacity = 1;
+  }
+});
+
+/* ---------- transcript */
+let firstSeg = true;
+const STATE_LABEL = { checking: "checking…", answering: "answering…", answered: "✓ answered", skipped: "" };
+const nearBottom = () => { const b = $("transcript"); return b.scrollHeight - b.scrollTop - b.clientHeight < 80; };
+const toBottom = () => { const b = $("transcript"); b.scrollTop = b.scrollHeight; };
+function setLive(text) {   // draft of what is being said right now
+  const stick = nearBottom();
+  if (text && firstSeg) { $("lines").innerHTML = ""; firstSeg = false; }
+  $("live").textContent = text;
+  $("live").hidden = !text;
+  if (stick) toBottom();
+}
+function addSegment(s) {
+  const box = $("lines");
+  if (firstSeg) { box.innerHTML = ""; firstSeg = false; }
+  const stick = nearBottom();
+  $("live").hidden = true; $("live").textContent = "";
+  box.insertAdjacentHTML("beforeend",
+    `<div class="seg" id="seg${s.id}" data-id="${s.id}"><span class="t">${esc(s.clock)}</span>${esc(s.text)}<span class="state"></span><span class="go"><button data-act="answer" title="Draft an answer to this line">Answer</button><button data-act="questions" title="Suggest questions you could ask about this">Questions</button></span></div>`);
+  if (stick) toBottom();
+}
+function flagSegment(f) {
+  const el = $("seg" + f.id);
+  if (!el) return;
+  el.classList.remove("checking", "answering", "answered", "skipped");
+  el.classList.add(f.state);
+  el.querySelector(".state").textContent = STATE_LABEL[f.state] ?? "";
+  if (f.reason) el.title = f.reason;
+}
+$("transcript").addEventListener("click", (e) => {
+  const act = e.target.closest(".go button")?.dataset.act;
+  if (!act) return;
+  const id = Number(e.target.closest(".seg").dataset.id);
+  if (act === "answer") post("/answer", { segment_id: id });
+  else requestQuestions({ segment_id: id });
+});
+$("paste").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const v = $("paste").value.trim();
+  if (v) { post("/segment", { text: v }); $("paste").value = ""; }
+});
+
+/* ---------- notes */
+function fillList(id, items, emptyText = "—") {
+  $(id).innerHTML = (items || []).map((x) => `<li>${esc(x)}</li>`).join("") || `<li style="list-style:none;margin-left:-18px;color:var(--faint)">${emptyText}</li>`;
+}
+function renderAnalysis(a) {
+  $("topic").textContent = a.current_topic ? "Now: " + a.current_topic : "";
+  $("notesClock").textContent = a.clock ? "· updated " + a.clock : "";
+  fillList("summary", a.summary);
+  fillList("decisions", a.decisions);
+  fillList("action_items", a.action_items);
+  fillList("open_issues", a.open_issues);
+}
+
+/* ---------- settings */
+function renderConfig(c) {
+  if (!$("context").value) $("context").value = c.context;
+  setPaused(c.paused);
+  $("auto").checked = c.auto;
+  auto = c.auto; renderQuestions(); renderModeHints();
+  for (const b of $("sensitivity").children) b.classList.toggle("on", b.dataset.v === c.sensitivity);
+  $("mode").textContent = c.mode;
+  $("modelInfo").innerHTML = `<dt>Speech</dt><dd>${esc(c.models.speech)}</dd><dt>Check</dt><dd>${esc(c.models.triage)}</dd><dt>Answers</dt><dd>${esc(c.models.main)}</dd><dt>Questions</dt><dd>${esc(c.models.questions)}</dd>`;
+  renderKB(c.kb);
+  if (c.ended) markEnded();
+}
+function renderKB(k) {
+  $("kbInfo").innerHTML = `<dt>Vault</dt><dd>${esc(k.vault)}</dd><dt>Pages</dt><dd>${k.pages}</dd><dt>To compile</dt><dd>${k.pending} meeting(s)</dd>`;
+}
+let ctxTimer;
+$("context").addEventListener("input", () => {
+  clearTimeout(ctxTimer);
+  ctxTimer = setTimeout(() => post("/settings", { context: $("context").value }), 600);
+});
+$("auto").onchange = () => { auto = $("auto").checked; renderQuestions(); renderModeHints(); post("/settings", { auto }); };
+$("sensitivity").onclick = (e) => {
+  const v = e.target.dataset.v; if (!v) return;
+  for (const b of $("sensitivity").children) b.classList.toggle("on", b === e.target);
+  post("/settings", { sensitivity: v });
+};
+
+/* ---------- drawers & header buttons */
+function openDrawer(id) { closeDrawers(); $(id).classList.add("open"); $("scrim").classList.add("on"); }
+function closeDrawers() { document.querySelectorAll(".drawer").forEach((d) => d.classList.remove("open")); $("scrim").classList.remove("on"); }
+$("openNotes").onclick = () => openDrawer("notes");
+$("openSettings").onclick = () => openDrawer("settings");
+$("emptySettings").onclick = (e) => { e.preventDefault(); openDrawer("settings"); };
+$("scrim").onclick = closeDrawers;
+document.querySelectorAll(".drawer .close").forEach((b) => (b.onclick = closeDrawers));
+$("refreshNotes").onclick = () => post("/summarize");
+$("pause").onclick = async () => { setPaused(!paused); await post("/pause", { paused }); };
+function applyTranscriptVisibility(show) {
+  $("main").classList.toggle("no-transcript", !show);
+  store.set("showTranscript", show ? "1" : "0");
+}
+applyTranscriptVisibility(store.get("showTranscript") !== "0");
+$("toggleTranscript").onclick = () => applyTranscriptVisibility($("main").classList.contains("no-transcript"));
+
+let endArmed = null;
+function markEnded() { $("end").textContent = "Meeting ended"; $("end").disabled = true; setPaused(true); }
+$("end").onclick = async () => {
+  if (!endArmed) {   // two-step confirm without a browser dialog
+    $("end").textContent = "Click again to end";
+    endArmed = setTimeout(() => { $("end").textContent = "End meeting"; endArmed = null; }, 3000);
+    return;
+  }
+  clearTimeout(endArmed); markEnded();
+  await post("/end");
+};
+
+/* ---------- composer */
+async function askPrivately() {
+  const q = $("composer").value.trim(); if (!q) return;
+  $("privateAnswer").textContent = "…";
+  const r = await post("/ask", { q });
+  $("privateAnswer").textContent = (await r.json()).answer;
+}
+function answerAsMe() {
+  const q = $("composer").value.trim(); if (!q) return;
+  post("/answer", { question: q }); $("composer").value = "";
+}
+$("answerAsMe").onclick = answerAsMe;
+$("askPrivately").onclick = askPrivately;
+$("questionsOn").onclick = () => {
+  const focus = $("composer").value.trim(); if (!focus) return;
+  requestQuestions({ focus }); $("composer").value = "";
+};
+$("composer").addEventListener("keydown", (e) => { if (e.key === "Enter") (e.metaKey || e.ctrlKey ? askPrivately : answerAsMe)(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeDrawers();
+  if (e.key === "/" && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $("composer").focus(); }
+});
+
+/* ---------- events */
+function connect() {
+  const es = new EventSource("/events");
+  es.onopen = () => setStatus(paused ? "paused" : "listening");
+  es.onerror = () => setStatus("disconnected – retrying");
+  es.onmessage = (e) => {
+    const { kind, data } = JSON.parse(e.data);
+    if (kind === "segment") addSegment(data);
+    else if (kind === "partial") setLive(data.text);
+    else if (kind === "flag") flagSegment(data);
+    else if (kind === "answer_pending") { pending = data; renderAnswers(); }
+    else if (kind === "answer") {
+      if (!answers.some((a) => a.id === data.id)) answers.push(data);
+      pending = null; renderAnswers();
+      $("answersScroll").scrollTop = 0;
+    }
+    else if (kind === "answer_failed") { pending = null; renderAnswers(); }
+    else if (kind === "analysis") renderAnalysis(data);
+    else if (kind === "questions_pending") { $("suggestQ").textContent = "Thinking…"; $("suggestQ").disabled = true; }
+    else if (kind === "questions") onQuestions(data);
+    else if (kind === "status") setStatus(data);
+    else if (kind === "usage") setUsage(data);
+    else if (kind === "kb") renderKB(data);
+    else if (kind === "config") renderConfig(data);
+  };
+}
+connect();
+</script>
+</body>
+</html>
