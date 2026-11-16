@@ -1,0 +1,8 @@
+vault/
+sessions/
+graphify-out/
+web/dist/
+web/node_modules/
+.venv/
+__pycache__/
+.pytest_cache/
