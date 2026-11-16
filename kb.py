@@ -36,13 +36,13 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import llm
+import meeting_notes
+import pages
 import speakers
 from config import CHAT_EFFORT, CHAT_MODEL, MAIN_MODEL, MY_ALIASES, MY_NAME, SESSIONS_DIR, VAULT_DIR
 from speakers import NOTE as TRANSCRIPT_NOTE
 
-RAW = VAULT_DIR / "raw" / "meetings"
-WIKI = VAULT_DIR / "wiki"
-WEEKLY = WIKI / "weekly"
+from pages import RAW, WEEKLY, WIKI, join_frontmatter, plain, split_frontmatter, title_of  # noqa: E402  (re-exported)
 KINDS = ("people", "projects", "topics")
 TYPES = {"people": "person", "projects": "project", "topics": "topic"}
 GLOSSARY = WIKI / "glossary.md"
@@ -147,28 +147,7 @@ def ensure_vault() -> None:
         rebuild_index()
 
 
-def split_frontmatter(text: str) -> tuple[dict, str]:
-    if not text.startswith("---\n"):
-        return {}, text
-    end = text.find("\n---\n", 4)
-    if end < 0:
-        return {}, text
-    meta = {}
-    for line in text[4:end].splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            meta[k.strip()] = v.strip()
-    return meta, text[end + 5:]
-
-
-def join_frontmatter(meta: dict, body: str) -> str:
-    head = "\n".join(f"{k}: {str(v).replace(chr(10), ' ')}" for k, v in meta.items())
-    return f"---\n{head}\n---\n{body.lstrip(chr(10))}"
-
-
-def title_of(body: str, fallback: str) -> str:
-    m = re.search(r"^# (.+)$", body, re.M)
-    return m.group(1).strip() if m else fallback
+page_title = pages.title
 
 
 def slugify(s: str) -> str:
@@ -250,11 +229,6 @@ def merge_unique(old: list[str], new: list[str]) -> list[str]:
             seen.add(norm(x))
             out.append(x)
     return out
-
-
-def page_title(path_rel: str) -> str:
-    p = WIKI / f"{path_rel}.md"
-    return title_of(split_frontmatter(p.read_text())[1], p.stem) if p.exists() else path_rel.split("/")[-1]
 
 
 # --------------------------------------------------------------------------- reading (live use)
@@ -626,24 +600,6 @@ def related_threads(paths: list[str], text: str = "", limit: int = 15) -> list[d
     return out[-limit:]
 
 
-def note_people(meta: dict) -> list[str]:
-    """The Persons a Meeting note records as having spoken (its `people:` frontmatter)."""
-    return [p.strip() for p in meta.get("people", "").split(",") if p.strip()]
-
-
-def last_meeting_with(paths: list[str], exclude: str = "") -> tuple[str, str] | None:
-    """The newest compiled meeting note where any of these people spoke, or (for notes from before speakers were
-    recorded) that links to any of these pages."""
-    wanted, links = set(paths), [f"[[{p}" for p in paths]
-    for p in sorted((WIKI / "meetings").glob("*.md"), reverse=True):
-        if p.stem == exclude:
-            continue
-        meta, body = split_frontmatter(p.read_text())
-        if wanted & set(note_people(meta)) or any(l in body for l in links):
-            return p.stem, body.split("\n## Mentioned")[0].split("\n## Who spoke")[0].strip()
-    return None
-
-
 # --------------------------------------------------------------------------- writing
 
 
@@ -724,7 +680,6 @@ def person_for(name: str) -> str:
     return path
 
 
-RECOMPILE = "needs_recompile"  # Meeting note frontmatter: why the note is out of date
 
 
 def voice_meetings(number: int) -> list[str]:
@@ -733,40 +688,13 @@ def voice_meetings(number: int) -> list[str]:
     return sorted(p.stem for p in RAW.glob("*.md") if pat.search(p.read_text()))
 
 
-def mark_recompile(meeting_ids: list[str], reason: str) -> list[str]:
-    """Flag these Meetings' notes (when they have one) as written before something they depend on changed.
-    No model call: `compile` and the Meetings page's Recompile button pick them up."""
-    marked = []
-    for mid in meeting_ids:
-        note = WIKI / "meetings" / f"{mid}.md"
-        if not note.exists():
-            continue
-        meta, body = split_frontmatter(note.read_text())
-        reasons = [r for r in meta.get(RECOMPILE, "").split("; ") if r]
-        if reason not in reasons:
-            meta[RECOMPILE] = "; ".join([*reasons, reason])
-            note.write_text(join_frontmatter(meta, body))
-        marked.append(mid)
-    return marked
-
-
-def stale_meetings() -> list[str]:
-    """Compiled Meetings marked as needing a recompile."""
-    return sorted(p.stem for p in (WIKI / "meetings").glob("*.md")
-                  if split_frontmatter(p.read_text())[0].get(RECOMPILE))
-
-
 REVIEW, REVIEW_MEETINGS = "needs_review", "review_meetings"  # Person page frontmatter after a Voice moved off it
-
-
-def page_file(path_rel: str) -> Path:
-    return WIKI / f"{path_rel}.md"
 
 
 def flag_review(path_rel: str, reason: str, meeting_ids: list[str]) -> None:
     """A Voice was moved off this Person: facts on the page citing these Meetings may be someone else's.
     Recorded in its frontmatter for `lint`; nothing on the page is changed or deleted."""
-    f = page_file(path_rel)
+    f = pages.file(path_rel)
     if not meeting_ids or not f.exists():
         return
     meta, body = split_frontmatter(f.read_text())
@@ -810,7 +738,7 @@ def name_voice(number: int, name: str) -> str:
         rebuild_index()  # first entry: index gets its Voices link
     if old != path:  # notes compiled while this Voice had another (or no) name are out of date
         who = FIRST_NAME if path == "me" else page_title(path)
-        compiled = mark_recompile(voice_meetings(number), f"Speaker {number} is now {who}")
+        compiled = meeting_notes.mark_for_recompile(voice_meetings(number), f"Speaker {number} is now {who}")
         if old:  # moved off a Person: what those Meetings put on their page may not be theirs
             flag_review(old, f"Speaker {number} was moved to {who}", compiled)
     return path
@@ -1051,25 +979,6 @@ COMPILE_SCHEMA = _obj(
 LINE = re.compile(r"^\[(\d+):(\d\d)\] (.*)$")
 
 
-def plain(text: str) -> str:
-    """[[topics/kafka|Kafka]] -> Kafka and **bold** -> bold, for display outside Obsidian."""
-    text = re.sub(r"\[\[([^\]|]+\|)?([^\]]+)\]\]", lambda m: m.group(2).split("/")[-1], text)
-    return re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-
-
-def meeting_sections(body: str) -> tuple[str, dict[str, list[str]]]:
-    """Title and `## Heading` -> bullets from a compiled meeting note."""
-    title, sections, cur = "", {}, None
-    for line in body.splitlines():
-        if line.startswith("# ") and not title:
-            title = line[2:].strip()
-        elif line.startswith("## "):
-            cur = sections.setdefault(line[3:].strip(), [])
-        elif cur is not None and line.startswith("- "):
-            cur.append(plain(line[2:].strip()))
-    return title, sections
-
-
 def list_meetings() -> list[dict]:
     """Past meetings for the dashboard, newest first: raw transcripts plus the compiled note when there is one."""
     out = []
@@ -1078,16 +987,12 @@ def list_meetings() -> list[dict]:
         lines = [m for m in map(LINE.match, body.splitlines()) if m]
         if not lines:
             continue
-        note = WIKI / "meetings" / raw.name
-        title, summary = "", ""
-        if note.exists():
-            nmeta, nbody = split_frontmatter(note.read_text())
-            title, sections = meeting_sections(nbody)
-            summary = nmeta.get("summary") or " ".join(sections.get("Summary", [])[:3])
-        out.append({"id": raw.stem, "date": meta.get("date", ""), "title": title,
-                    "summary": summary or " ".join(speakers.parse(m.group(3))[1] for m in lines[:3])[:300],
-                    "minutes": int(lines[-1].group(1)) + 1, "compiled": note.exists(),
-                    "stale": bool(note.exists() and nmeta.get(RECOMPILE))})
+        note = meeting_notes.load(raw.stem)
+        out.append({"id": raw.stem, "date": meta.get("date", ""), "title": note.title if note else "",
+                    "summary": (note.summary if note else "")
+                    or " ".join(speakers.parse(m.group(3))[1] for m in lines[:3])[:300],
+                    "minutes": int(lines[-1].group(1)) + 1, "compiled": note is not None,
+                    "stale": bool(note and note.needs_recompile)})
     return out
 
 
@@ -1102,15 +1007,13 @@ def load_meeting(meeting_id: str) -> dict | None:
             speaker, text = speakers.parse(m.group(3))
             lines.append({"id": len(lines), "clock": f"{int(m.group(1)):02d}:{m.group(2)}",
                           "text": text, "speaker": speaker})
-    note = WIKI / "meetings" / raw.name
-    title, sections = meeting_sections(split_frontmatter(note.read_text())[1]) if note.exists() else ("", {})
-    sections.pop("Mentioned", None)
-    sections.pop("Who spoke", None)  # the page's Speakers strip shows this
-    return {"id": meeting_id, "date": meta.get("date", ""), "title": title, "sections": sections, "lines": lines}
+    note = meeting_notes.load(meeting_id)
+    return {"id": meeting_id, "date": meta.get("date", ""), "title": note.title if note else "",
+            "sections": note.sections if note else {}, "lines": lines}
 
 
 def pending_meetings() -> list[str]:
-    return sorted(p.stem for p in RAW.glob("*.md") if not (WIKI / "meetings" / p.name).exists())
+    return sorted(p.stem for p in RAW.glob("*.md") if not meeting_notes.exists(p.stem))
 
 
 def compile_candidates(transcript: str, k: int = 8, cap: int = 2400) -> dict[str, tuple[str, bool]]:
@@ -1178,7 +1081,7 @@ async def compile_meeting(meeting_id: str, model: str = MAIN_MODEL) -> str:
             if target and target.split("/")[0] in KINDS and (WIKI / f"{target}.md").exists():
                 path_rel = target
         write_entity(path_rel, page, meeting_id, replace=current.get(path_rel, ("", False))[1])
-        mentioned.append(f"[[{path_rel}|{page['title'].strip()}]]")
+        mentioned.append((path_rel, page["title"]))
 
     me_new = [clean_item(x) for x in data["me_new"] if clean_item(x)]
     if me_new and ME_LOG.exists():  # a recompile shouldn't log the same facts twice
@@ -1191,26 +1094,17 @@ async def compile_meeting(meeting_id: str, model: str = MAIN_MODEL) -> str:
     merge_glossary(data["glossary"])
     added, closed = update_threads(data["threads_new"], data["threads_closed"], meeting_id)
 
-    note_meta = {"type": "meeting", "date": meta.get("date", ""), "summary": data["summary"],
-                 "people": ", ".join(spoke), "unnamed_speakers": unnamed, "updated": date.today().isoformat()}
-    body = f"# {data['title']}\n\n{data['note'].strip()}\n"
-    if mentioned:
-        body += "\n## Mentioned\n" + " · ".join(dict.fromkeys(mentioned)) + "\n"
-    if spoke or unnamed:
-        who = [f"[[{p}|{FIRST_NAME if p == 'me' else page_title(p)}]]" for p in spoke]
-        who += [f"{unnamed} unnamed speaker{'s' if unnamed > 1 else ''}"] if unnamed else []
-        body += "\n## Who spoke\n" + " · ".join(who) + "\n"
-    body += f"\nTranscript: [[raw/meetings/{meeting_id}]]\n"
-    (WIKI / "meetings" / f"{meeting_id}.md").write_text(join_frontmatter(note_meta, body))
+    meeting_notes.write(meeting_id, title=data["title"], date_=meta.get("date", ""), summary=data["summary"],
+                        note=data["note"], mentioned=mentioned, people=spoke, unnamed=unnamed)
     rebuild_index()
     extra = f", threads +{added}/-{closed}" if added or closed else ""
-    return f"{meeting_id}: {data['title']} ({len(mentioned)} pages{extra})"
+    return f"{meeting_id}: {data['title']} ({len(dict(mentioned))} pages{extra})"
 
 
 async def compile_pending(on_progress=print, stale: bool = False) -> list[str]:
     """Compile every Meeting without a note; with stale=True, also rewrite the notes marked needs_recompile."""
     results = []
-    for mid in pending_meetings() + (stale_meetings() if stale else []):
+    for mid in pending_meetings() + (meeting_notes.needing_recompile() if stale else []):
         try:
             results.append(await compile_meeting(mid))
         except Exception as e:
@@ -1268,7 +1162,7 @@ def load_weekly(monday: str) -> dict | None:
     if not f.exists():
         return {"week": monday, "written": False, "meetings": meetings}
     meta, body = split_frontmatter(f.read_text())
-    title, sections = meeting_sections(body)
+    title, sections = pages.bullet_sections(body)
     sections.pop("Meetings this week", None)
     return {"week": monday, "written": True, "title": title, "summary": plain(meta.get("summary", "")),
             "generated": meta.get("generated", ""), "sections": sections, "markdown": body, "meetings": meetings}
@@ -1317,17 +1211,16 @@ def _week_material(ids: list[str], max_raw_words: int = 8000) -> str:
     """The compiled note for each meeting, or its transcript when it has none yet."""
     parts = []
     for mid in ids:
-        note = WIKI / "meetings" / f"{mid}.md"
-        meta, text = split_frontmatter((note if note.exists() else RAW / f"{mid}.md").read_text())
-        if not note.exists():
+        note = meeting_notes.load(mid)
+        meta, text = ({}, note.body) if note else split_frontmatter((RAW / f"{mid}.md").read_text())
+        if not note:
             text = speakers.render(text)
-        words = text.split()
-        if not note.exists():
+            words = text.split()
             if len(words) < 60:
                 continue
             if len(words) > max_raw_words:  # keep the start and the end, where plans and wrap-ups are
                 text = " ".join(words[: max_raw_words // 2]) + "\n…\n" + " ".join(words[-max_raw_words // 2:])
-        kind = "notes" if note.exists() else "transcript"
+        kind = "notes" if note else "transcript"
         parts.append(f'<meeting id="{mid}" when="{meeting_label(mid)}" source="{kind}" '
                      f'context="{meta.get("context", "")}">\n{plain(text).strip()}\n</meeting>')
     return "\n\n".join(parts)
@@ -1354,7 +1247,7 @@ async def write_weekly(monday: date, model: str = CHAT_MODEL) -> str:
     data = await llm.complete(model, WEEKLY_SYSTEM, user, schema=WEEKLY_SCHEMA, max_tokens=12000, effort=CHAT_EFFORT)
 
     def cite(item: dict) -> str:
-        links = [f"[[{'meetings' if (WIKI / 'meetings' / f'{m}.md').exists() else 'raw/meetings'}/{m}|"
+        links = [f"[[{'meetings' if meeting_notes.exists(m) else 'raw/meetings'}/{m}|"
                  f"{meeting_label(m)}]]" for m in item["meetings"] if m in ids]
         return f"- {item['text'].strip()}" + (f" ({', '.join(links)})" if links else "")
 
@@ -1364,9 +1257,9 @@ async def write_weekly(monday: date, model: str = CHAT_MODEL) -> str:
             body += ["", f"## {heading}", *map(cite, data[key])]
     body += ["", "## Meetings this week"]
     for mid in ids:
-        note = WIKI / "meetings" / f"{mid}.md"
-        title = title_of(split_frontmatter(note.read_text())[1], mid) if note.exists() else "(not compiled yet)"
-        body.append(f"- [[{'meetings' if note.exists() else 'raw/meetings'}/{mid}|{meeting_label(mid)}]] {title}")
+        note = meeting_notes.load(mid)
+        title = (note.title or mid) if note else "(not compiled yet)"
+        body.append(f"- [[{'meetings' if note else 'raw/meetings'}/{mid}|{meeting_label(mid)}]] {title}")
     meta = {"type": "weekly", "week": monday.isoformat(), "summary": data["summary"].strip(),
             "generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "updated": date.today().isoformat()}
     WEEKLY.mkdir(parents=True, exist_ok=True)
@@ -1403,7 +1296,7 @@ def lint() -> dict:
                 overgrown.append(r)
     orphans = [r for r, n in inbound.items() if n == 0 and r not in SPECIAL and not r.startswith(("meetings/", "weekly/"))]
     return {"pages": len(pages), "broken_links": broken, "orphans": orphans, "overgrown": overgrown,
-            "old_layout": legacy, "needs_recompile": stale_meetings(), "check_after_voice_moved": review_report()}
+            "old_layout": legacy, "needs_recompile": meeting_notes.needing_recompile(), "check_after_voice_moved": review_report()}
 
 
 # --------------------------------------------------------------------------- maintenance (backup, merge, rebuild)
@@ -1416,25 +1309,16 @@ def backup() -> Path:
 
 
 def rewrite_links(src: str, dst: str) -> int:
-    """[[src…]] -> [[dst…]] in every wiki file, and src -> dst in Meeting notes' `people:` frontmatter."""
+    """[[src…]] -> [[dst…]] in every wiki file, and src -> dst in Meeting notes' who-spoke records."""
     pat = re.compile(r"\[\[" + re.escape(src) + r"(?=[\]|#])")
-    people = re.compile(r"^people: (.*)$", re.M)
-
-    def fix_people(m: re.Match) -> str:
-        items = [dst if x.strip() == src else x.strip() for x in m.group(1).split(",") if x.strip()]
-        return "people: " + ", ".join(dict.fromkeys(items))
-
     n = 0
     for p in WIKI.rglob("*.md"):
         text = p.read_text()
         new, k = pat.subn(f"[[{dst}", text)
-        if text.startswith("---\n") and "\npeople: " in text:
-            fixed = people.sub(fix_people, new, count=1)
-            new, k = fixed, k + (fixed != new)
         if k:
             p.write_text(new)
             n += k
-    return n
+    return n + meeting_notes.rename_person(src, dst)
 
 
 def merge_pages(src: str, dst: str) -> str:
@@ -1662,7 +1546,7 @@ def main() -> None:
         if args.meeting:
             print(asyncio.run(compile_meeting(args.meeting)))
         else:
-            stale = stale_meetings()
+            stale = meeting_notes.needing_recompile()
             print(f"Compiling {len(pending_meetings())} new meeting(s) and recompiling {len(stale)} marked one(s) "
                   f"with {MAIN_MODEL}…")
             asyncio.run(compile_pending(stale=True))

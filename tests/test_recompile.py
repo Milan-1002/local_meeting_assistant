@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+import meeting_notes
 from conftest import copilot, fill, kb, wait_for
 
 WORDS = " ".join(["the rollout plan needs another review before we ship it"] * 8)
@@ -41,8 +42,8 @@ def compile_reply(log_note: str, me_new=()):
     return reply
 
 
-def note_meta(mid=MID) -> dict:
-    return kb.split_frontmatter((kb.WIKI / "meetings" / f"{mid}.md").read_text())[0]
+def note(mid=MID) -> meeting_notes.MeetingNote:
+    return meeting_notes.load(mid)
 
 
 def test_naming_marks_compiled_meetings_and_recompile_clears(app, stub_llm):
@@ -52,31 +53,31 @@ def test_naming_marks_compiled_meetings_and_recompile_clears(app, stub_llm):
 
     app.post("/voices/name", json={"voice": 3, "name": "Priya"})
     assert len(stub_llm.calls) == calls  # naming never calls the model
-    assert note_meta()[kb.RECOMPILE] == "Speaker 3 is now Priya"
-    assert kb.stale_meetings() == [MID]
+    assert note().recompile_reasons == ["Speaker 3 is now Priya"]
+    assert meeting_notes.needing_recompile() == [MID]
     assert next(m for m in kb.list_meetings() if m["id"] == MID)["stale"]
     assert kb.lint()["needs_recompile"] == [MID]
     assert app.get("/meetings").json()[0]["stale"]
 
     assert app.post("/recompile").json() == {"ok": True, "meetings": 1}
-    wait_for(lambda: not kb.stale_meetings())
-    assert kb.RECOMPILE not in note_meta()
-    assert note_meta()["people"] == "people/priya"
+    wait_for(lambda: not meeting_notes.needing_recompile())
+    assert not note().needs_recompile
+    assert note().people == ["people/priya"]
     assert app.post("/recompile").json() == {"ok": True, "meetings": 0}
 
 
 def test_naming_marks_nothing_when_not_needed():
     raw(MID, f"[00:10] Speaker 3: {WORDS}\n")  # not compiled
     kb.name_voice(3, "Priya")
-    assert kb.stale_meetings() == []
+    assert meeting_notes.needing_recompile() == []
 
     raw("2025-12-11_10-00-00", f"[00:10] Speaker 4: {WORDS}\n")
     (kb.WIKI / "meetings" / "2025-12-11_10-00-00.md").write_text("---\ntype: meeting\n---\n# M\n")
     kb.name_voice(3, "Priya")  # same name again; Voice 3 isn't in that meeting anyway
-    assert kb.stale_meetings() == []
+    assert meeting_notes.needing_recompile() == []
     kb.name_voice(4, "Bob")
     kb.name_voice(4, "Bob")  # unchanged: no second reason
-    assert note_meta("2025-12-11_10-00-00")[kb.RECOMPILE] == "Speaker 4 is now Bob"
+    assert note("2025-12-11_10-00-00").recompile_reasons == ["Speaker 4 is now Bob"]
 
 
 def test_recompile_replaces_only_that_meetings_log_line(stub_llm):
@@ -103,7 +104,7 @@ def test_end_meeting_path_leaves_marked_notes_alone(stub_llm):
     kb.name_voice(3, "Priya")
     stub_llm.calls.clear()
     asyncio.run(kb.compile_pending())  # what End meeting runs
-    assert stub_llm.calls == [] and kb.stale_meetings() == [MID]
+    assert stub_llm.calls == [] and meeting_notes.needing_recompile() == [MID]
 
 
 def test_recompile_does_not_log_me_facts_twice(stub_llm):

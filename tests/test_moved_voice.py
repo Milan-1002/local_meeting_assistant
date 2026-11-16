@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import meeting_notes
 from conftest import kb
 
 MID, OTHER = "2025-12-20_10-00-00", "2025-12-01_10-00-00"
@@ -43,7 +44,7 @@ def test_moving_a_voice_flags_the_old_person():
                        "check": [f"- Owns the rollout ([[meetings/{MID}]])",
                                  f"- 2025-12-20 · raised the risk ([[meetings/{MID}]])"]}]
     assert kb.split_frontmatter(priya_page().read_text())[1] == before  # nothing removed
-    assert kb.stale_meetings() == [MID]  # and the meeting is marked as in ticket 06
+    assert meeting_notes.needing_recompile() == [MID]  # and the meeting is marked as in ticket 06
 
 
 def test_naming_an_unnamed_voice_flags_nothing():

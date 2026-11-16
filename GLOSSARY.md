@@ -20,6 +20,10 @@ _Avoid_: Summary, notes (on its own)
 The wiki page written for a Meeting after it ends, distilling what was decided and learned.
 _Avoid_: Compiled note, summary, notes (on its own)
 
+**Wiki page**:
+One Markdown page in the knowledge base: a Person, project or topic page, a Meeting note, a weekly review, or a page the app maintains (voices, threads, glossary). Transcripts are not wiki pages.
+_Avoid_: Note (on its own), doc, file
+
 **Brief**:
 A short preparation note written before or at the start of a Meeting from past Meetings with the same people and topics.
 _Avoid_: Prep, summary

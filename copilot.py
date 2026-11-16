@@ -36,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 
 import kb
 import llm
+import meeting_notes
 import speakers
 from config import (AUTO_MODE, CHAT_EFFORT, CHAT_MODEL, HAS_ANTHROPIC, HAS_OPENAI, MAIN_MODEL, MY_NAME, QUESTIONS_COOLDOWN_S, QUESTIONS_EFFORT,
                     QUESTIONS_EVERY_S, QUESTIONS_MODEL, RECENT_WINDOW_S, ROOT, SENSITIVITY, SESSIONS_DIR,
@@ -811,7 +812,7 @@ async def weekly_loop() -> None:
 
 def kb_stats() -> dict:
     return {"vault": str(VAULT_DIR), "pages": len(kb.wiki_pages()), "pending": len(kb.pending_meetings()),
-            "stale": len(kb.stale_meetings())}
+            "stale": len(meeting_notes.needing_recompile())}
 
 
 # --------------------------------------------------------------------------- web
@@ -1084,7 +1085,7 @@ async def write_brief(focus: str = "") -> None:
         spoke = [p for p in kb.speakers_in(s.speaker for s in meeting.segments)[0] if p.startswith("people/")]
         paths += [p for p in spoke if p not in paths]  # who is actually talking in this meeting
         threads = kb.related_threads(paths, query)
-        last = kb.last_meeting_with(spoke or [p for p in paths if p.startswith("people/")], exclude=meeting_id)
+        last = meeting_notes.with_person(spoke or [p for p in paths if p.startswith("people/")], exclude=meeting_id)
         pages_block = "\n\n".join(f'<page path="{p}">\n{body}\n</page>' for p, body in pages) or "(no matching pages)"
         user = f"""<meeting_context>{meeting.context or "(not provided)"}</meeting_context>
 <focus>{focus or "(none)"}</focus>
@@ -1293,7 +1294,7 @@ recompile_lock = asyncio.Lock()
 @app.post("/recompile")
 async def recompile():
     """Rewrite the Meeting notes marked needs_recompile (one MAIN_MODEL call each). Only ever on this click."""
-    ids = kb.stale_meetings()
+    ids = meeting_notes.needing_recompile()
     if not ids:
         return {"ok": True, "meetings": 0}
     if recompile_lock.locked():
